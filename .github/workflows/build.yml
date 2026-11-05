@@ -26,16 +26,14 @@ jobs:
 
           # 1. Compiler les ressources Win32 (.rc -> .res)
           Write-Host "Compilation des ressources Win32..."
-          rc.exe /fo build/Release/resource.res src/tray/resource.rc
+          rc.exe /fo build/Release/resource.res src/tray/resources.rc
 
           # 2. Compiler et linker OFXRBridgeTray.exe
-          # Les headers d'interface nécessaires se trouvent dans src/ et vendor/
+          # Les headers publics du projet sont dans include/.
           Write-Host "Compilation de OFXRBridgeTray.exe..."
           cl.exe /nologo /O2 /std:c++20 /EHsc /utf-8 `
             /I "src" `
-            /I "vendor" `
-            /I "vendor/openxr/include" `
-            /I "vendor/vulkan/include" `
+            /I "include" `
             /D "NDEBUG" `
             /D "UNICODE" `
             /D "_UNICODE" `
