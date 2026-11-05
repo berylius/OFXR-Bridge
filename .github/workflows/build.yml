@@ -37,6 +37,7 @@ jobs:
           cl.exe /nologo /O2 /std:c++20 /EHsc /utf-8 `
             /I "src" `
             /I "include" `
+            /I "src/ui/vendor/imgui" `
             /D "NDEBUG" `
             /D "NOMINMAX" `
             /D "UNICODE" `
@@ -44,10 +45,31 @@ jobs:
             /D "XRFG_IMPLEMENTATION_VERSION=773" `
             /D "XRFG_IMPLEMENTATION_PATCH=0" `
             src/tray/main.cpp `
+            src/tray/standalone_launcher.cpp `
+            src/common/ram_timing.cpp `
+            src/common/embedded_control.cpp `
+            src/common/implicit_layer.cpp `
+            src/common/autonomous_control.cpp `
+            src/common/dlssg_profile.cpp `
+            src/core/interface_metrics.cpp `
+            src/core/fps_overlay_model.cpp `
+            src/core/elliott_meter.cpp `
+            src/core/image.cpp `
+            src/core/optical_flow.cpp `
+            src/core/pose.cpp `
+            src/ui/settings_window.cpp `
+            src/ui/settings_widgets.cpp `
+            src/ui/vendor/imgui/imgui.cpp `
+            src/ui/vendor/imgui/imgui_draw.cpp `
+            src/ui/vendor/imgui/imgui_tables.cpp `
+            src/ui/vendor/imgui/imgui_widgets.cpp `
+            src/ui/vendor/imgui/imgui_impl_win32.cpp `
+            src/ui/vendor/imgui/imgui_impl_dx11.cpp `
             build/Release/resource.res `
             /Fe:build/Release/OFXRBridgeTray.exe `
             /link /SUBSYSTEM:WINDOWS `
-            user32.lib shell32.lib comctl32.lib advapi32.lib ole32.lib shlwapi.lib
+            user32.lib shell32.lib comctl32.lib advapi32.lib ole32.lib shlwapi.lib `
+            d3d11.lib dxgi.lib d3dcompiler.lib dwmapi.lib comdlg32.lib
 
           if ($LASTEXITCODE -ne 0) {
             throw "La compilation de OFXRBridgeTray.exe a échoué ($LASTEXITCODE)."
