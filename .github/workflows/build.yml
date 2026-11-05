@@ -1,25 +1,35 @@
-name: Build
+name: Build OFXR Bridge Tray
 
 on:
   push:
+    branches: [ main, master ]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Build autonomous route
+      - name: Configure CMake (Tray only)
         shell: pwsh
-        run: .\Build-Autonomous.ps1 -TestRoute new
+        run: |
+          # Configuration minimale sans exiger les dépendances autonomes
+          cmake -B build -G "Visual Studio 17 2022" -A x64 -DXRFG_BUILD_RENDERER=OFF -DCMAKE_BUILD_TYPE=Release
 
-      - name: Upload build artifacts
+      - name: Build Tray Executable
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target OFXRBridgeTray
+
+      - name: Upload Tray Binary
         uses: actions/upload-artifact@v4
         with:
-          name: ofxr-autonomous-new
-          path: builds/ofxr-autonomous-new/Release/
-          if-no-files-found: error
+          name: OFXRBridgeTray-patched
+          path: build/Release/OFXRBridgeTray.exe
