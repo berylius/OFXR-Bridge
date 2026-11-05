@@ -10,9 +10,15 @@ $ErrorActionPreference = 'Continue'
 $sourceRoot = $PSScriptRoot
 if (-not $DependencyRoot) { $DependencyRoot = [IO.Path]::GetFullPath((Join-Path $sourceRoot '../.local/ofxr-autonomous-deps')) }
 if (-not $BuildRoot) { $BuildRoot = [IO.Path]::GetFullPath((Join-Path $sourceRoot "../builds/ofxr-autonomous-$TestRoute")) }
-$cmake = 'C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe'
+$cmakeCommand = Get-Command cmake.exe -ErrorAction Stop
+$cmake = $cmakeCommand.Source
 $ctest = Join-Path (Split-Path $cmake) 'ctest.exe'
-& $cmake -S $sourceRoot -B $BuildRoot -G 'Visual Studio 17 2022' -A x64 "-DXRFG_DEPENDENCY_ROOT=$DependencyRoot" "-DXRFG_TEST_NVIDIA_ROUTE=$TestRoute" "-DXRFG_AFW_RUNTIME=$DependencyRoot/runtime/afw-beta6/PDAFWPlugin.dll" -DXRFG_BUILD_TESTS=ON
+$cmakeHelp = & $cmake --help
+if ($LASTEXITCODE) { throw "CMake generator discovery failed: $LASTEXITCODE" }
+$generatorLine = $cmakeHelp | Select-String '^\s*\*?\s*Visual Studio \d+ \d{4}\s*=' | Select-Object -First 1
+if (-not $generatorLine) { throw 'No Visual Studio CMake generator is available' }
+$generator = [regex]::Match($generatorLine.Line, 'Visual Studio \d+ \d{4}').Value
+& $cmake -S $sourceRoot -B $BuildRoot -G $generator -A x64 "-DXRFG_DEPENDENCY_ROOT=$DependencyRoot" "-DXRFG_TEST_NVIDIA_ROUTE=$TestRoute" "-DXRFG_AFW_RUNTIME=$DependencyRoot/runtime/afw-beta6/PDAFWPlugin.dll" -DXRFG_BUILD_TESTS=ON
 if ($LASTEXITCODE) { throw "CMake configure failed: $LASTEXITCODE" }
 & $cmake --build $BuildRoot --config Release --parallel
 if ($LASTEXITCODE) { throw "Release build failed: $LASTEXITCODE" }
