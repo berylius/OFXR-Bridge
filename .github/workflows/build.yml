@@ -1,8 +1,8 @@
-name: Build OFXR Bridge Tray
+name: Build OFXR Bridge Tray Direct
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, berylius-arm-and-exit-lifecycle ]
   pull_request:
   workflow_dispatch:
 
@@ -13,28 +13,46 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Configure CMake (Tray only)
+      - name: Compile OFXRBridgeTray with MSVC
         shell: pwsh
         run: |
-          # Utilisation de Ninja avec l'environnement MSVC activé
-          cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DXRFG_BUILD_RENDERER=OFF
+          New-Item -ItemType Directory -Force -Path "build/Release"
 
-      - name: Build Tray Executable
-        shell: pwsh
-        run: |
-          cmake --build build --config Release --target OFXRBridgeTray
+          # 1. Compiler les ressources Win32 (.rc -> .res)
+          Write-Host "Compilation des ressources Win32..."
+          rc.exe /fo build/Release/resource.res src/tray/resource.rc
 
-      - name: Upload Tray Binary
+          # 2. Compiler et linker OFXRBridgeTray.exe
+          # Les headers d'interface nécessaires se trouvent dans src/ et vendor/
+          Write-Host "Compilation de OFXRBridgeTray.exe..."
+          cl.exe /nologo /O2 /std:c++20 /EHsc /utf-8 `
+            /I "src" `
+            /I "vendor" `
+            /I "vendor/openxr/include" `
+            /I "vendor/vulkan/include" `
+            /D "NDEBUG" `
+            /D "UNICODE" `
+            /D "_UNICODE" `
+            /D "XRFG_IMPLEMENTATION_VERSION=302" `
+            /D "XRFG_IMPLEMENTATION_PATCH=0" `
+            src/tray/main.cpp `
+            build/Release/resource.res `
+            /Fe:build/Release/OFXRBridgeTray.exe `
+            /link /SUBSYSTEM:WINDOWS `
+            user32.lib shell32.lib comctl32.lib advapi32.lib ole32.lib shlwapi.lib
+
+          if (-not (Test-Path "build/Release/OFXRBridgeTray.exe")) {
+            throw "OFXRBridgeTray.exe n'a pas été généré."
+          }
+
+      - name: Upload Patched Tray Binary
         uses: actions/upload-artifact@v4
         with:
           name: OFXRBridgeTray-patched
-          # Avec Ninja en mode Release, l'exécutable est généré directement dans build/ (ou build/bin/),
-          # on utilise un pattern pour le capturer où qu'il soit :
-          path: |
-            build/OFXRBridgeTray.exe
-            build/Release/OFXRBridgeTray.exe
-            build/bin/OFXRBridgeTray.exe
+          path: build/Release/OFXRBridgeTray.exe
