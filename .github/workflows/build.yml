@@ -20,8 +20,8 @@ jobs:
       - name: Configure CMake (Tray only)
         shell: pwsh
         run: |
-          # Configuration minimale sans exiger les dépendances autonomes
-          cmake -B build -G "Visual Studio 17 2022" -A x64 -DXRFG_BUILD_RENDERER=OFF -DCMAKE_BUILD_TYPE=Release
+          # Utilisation de Ninja avec l'environnement MSVC activé
+          cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DXRFG_BUILD_RENDERER=OFF
 
       - name: Build Tray Executable
         shell: pwsh
@@ -32,4 +32,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: OFXRBridgeTray-patched
-          path: build/Release/OFXRBridgeTray.exe
+          # Avec Ninja en mode Release, l'exécutable est généré directement dans build/ (ou build/bin/),
+          # on utilise un pattern pour le capturer où qu'il soit :
+          path: |
+            build/OFXRBridgeTray.exe
+            build/Release/OFXRBridgeTray.exe
+            build/bin/OFXRBridgeTray.exe
