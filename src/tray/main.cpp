@@ -40,6 +40,7 @@ constexpr wchar_t kWindowClass[] = L"OFXRBridgeTrayWindow";
 #define XRFG_WIDE(x) XRFG_WIDE_IMPL(x)
 constexpr wchar_t kApplicationName[] = L"OFXR-BRIDGE 0.3.2 (v" XRFG_WIDE(XRFG_STRING(XRFG_IMPLEMENTATION_VERSION)) L")";
 constexpr wchar_t kCleanupArgument[] = L"--cleanup-manual-arm";
+constexpr wchar_t kArmAndExitArgument[] = L"--arm-and-exit";
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT_PTR kTrayId = 1;
 constexpr UINT_PTR kBenchmarkTimer = 558;
@@ -229,8 +230,11 @@ void log_lifecycle(const std::filesystem::path& local_directory,
 [[nodiscard]] bool write_runtime_configuration(
     const AppState& state,
     std::wstring* error,
-    const std::filesystem::path& arm_manifest = {}) {
-    const auto& manifest = arm_manifest.empty() ? state.armed_manifest : arm_manifest;
+    const std::filesystem::path& arm_manifest = {},
+    bool managed = true) {
+    const std::filesystem::path manifest = managed
+        ? (arm_manifest.empty() ? state.armed_manifest : arm_manifest)
+        : std::filesystem::path{};
     // The single user INI owns diagnostics limits; runtime files are generated.
     const auto destination = runtime_directory(state.local_directory) / L"ofxr_bridge.ini";
     const auto source = state.settings_path;
@@ -260,7 +264,8 @@ void log_lifecycle(const std::filesystem::path& local_directory,
     AppState& state,
     std::filesystem::path* manifest,
     std::filesystem::path* vulkan_manifest,
-    std::wstring* error) {
+    std::wstring* error,
+    bool managed = true) {
     if (vulkan_manifest) vulkan_manifest->clear();
     try {
         const auto source_dll = state.executable_directory / L"ofxr" /
@@ -301,21 +306,23 @@ void log_lifecycle(const std::filesystem::path& local_directory,
             xrfg::implicit_layer::kManifestSuffix;
         const auto generated_manifest = directory / manifest_name;
         *manifest = generated_manifest;
-        state.arm_signal = xrfg::implicit_layer::create_arm_signal(generated_manifest, error);
-        if (!state.arm_signal) return false;
-        // Not worth refusing the arm over: without it the menu entry is grey.
-        std::wstring pause_error;
-        state.pause_signal = xrfg::implicit_layer::create_pause_signal(
-            generated_manifest, &pause_error);
-        state.paused = false;
-        if (!state.pause_signal)
-            log_lifecycle(state.local_directory, L"pause-control", pause_error);
+        if (managed) {
+            state.arm_signal = xrfg::implicit_layer::create_arm_signal(generated_manifest, error);
+            if (!state.arm_signal) return false;
+            // Not worth refusing the arm over: without it the menu entry is grey.
+            std::wstring pause_error;
+            state.pause_signal = xrfg::implicit_layer::create_pause_signal(
+                generated_manifest, &pause_error);
+            state.paused = false;
+            if (!state.pause_signal)
+                log_lifecycle(state.local_directory, L"pause-control", pause_error);
+        }
         if (!write_text_atomic(
                 generated_manifest,
                 xrfg::standalone::build_implicit_layer_manifest(
                     runtime_dll, kImplementationVersion),
                 error) ||
-            !write_runtime_configuration(state, error, generated_manifest)) {
+            !write_runtime_configuration(state, error, generated_manifest, managed)) {
             remove_manifest_file(generated_manifest);
             return false;
         }
@@ -626,6 +633,45 @@ void close_pause_signal(AppState& state) {
         state,
         L"OFXR 0.3.0 armed",
         L"The bridge will remain enabled for OpenXR applications until you disarm it or exit the tray.");
+    return true;
+}
+
+// Leaves a persistent registration without a tray-owned watchdog or control
+// event. Intended for launchers that cannot keep the tray running alongside
+// the game (for example, Proton with separate wineservers).
+[[nodiscard]] bool arm_and_exit(
+    AppState& state,
+    std::wstring* error,
+    xrfg::implicit_layer::RegistryScope scope =
+        xrfg::implicit_layer::preferred_registry_scope()) {
+    if (!cleanup_all_owned_registrations(state, error)) return false;
+
+    std::filesystem::path manifest;
+    std::filesystem::path vulkan_manifest;
+    if (!prepare_runtime_layer(state, &manifest, &vulkan_manifest, error, false) ||
+        !xrfg::implicit_layer::register_manifest(
+            manifest, scope, error, state.registry_subkey) ||
+        (!vulkan_manifest.empty() &&
+         !xrfg::implicit_layer::register_manifest(
+             vulkan_manifest, scope, error,
+             xrfg::implicit_layer::kVulkanRegistrySubkey))) {
+        std::wstring ignored;
+        if (!vulkan_manifest.empty()) {
+            static_cast<void>(xrfg::implicit_layer::retire_manifest(
+                vulkan_manifest, scope, &ignored,
+                xrfg::implicit_layer::kVulkanRegistrySubkey));
+        }
+        if (!manifest.empty()) {
+            static_cast<void>(xrfg::implicit_layer::retire_manifest(
+                manifest, scope, &ignored, state.registry_subkey));
+        }
+        return false;
+    }
+
+    log_lifecycle(state.local_directory,
+        scope == xrfg::implicit_layer::RegistryScope::local_machine
+            ? L"arm-and-exit-hklm"
+            : L"arm-and-exit-hkcu");
     return true;
 }
 
@@ -1346,6 +1392,16 @@ LRESULT CALLBACK window_procedure(
     return cleaned ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
+[[nodiscard]] bool arm_and_exit_requested() {
+    int argument_count = 0;
+    LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &argument_count);
+    if (arguments == nullptr) return false;
+    const bool requested = argument_count == 2 &&
+        _wcsicmp(arguments[1], kArmAndExitArgument) == 0;
+    LocalFree(arguments);
+    return requested;
+}
+
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR arguments, int) {
@@ -1384,6 +1440,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR arguments, int) {
     if (const auto helper_result = run_cleanup_helper()) {
         return *helper_result;
     }
+    const bool arm_only = arm_and_exit_requested();
 
     HANDLE single_instance = CreateMutexW(nullptr, TRUE, L"Local\\OFXRBridgeTrayV474");
     if (single_instance == nullptr) {
@@ -1396,7 +1453,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR arguments, int) {
             kApplicationName,
             MB_OK | MB_ICONINFORMATION);
         CloseHandle(single_instance);
-        return EXIT_SUCCESS;
+        return arm_only ? EXIT_FAILURE : EXIT_SUCCESS;
     }
 
     AppState state;
@@ -1413,6 +1470,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR arguments, int) {
         }
         log_lifecycle(state.local_directory, L"startup-cleanup");
         load_settings(state);
+        if (arm_only) {
+            std::wstring arm_error;
+            const bool armed = arm_and_exit(state, &arm_error);
+            if (!armed) {
+                log_lifecycle(state.local_directory, L"arm-and-exit", arm_error);
+                MessageBoxW(nullptr, arm_error.c_str(), kApplicationName, MB_OK | MB_ICONERROR);
+            }
+            CloseHandle(single_instance);
+            return armed ? EXIT_SUCCESS : EXIT_FAILURE;
+        }
         save_settings(state);
         const auto preset_target=xrfg::standalone::last_dlssg_game(state.settings_path);
         prepare_crash_debug(state,preset_target);

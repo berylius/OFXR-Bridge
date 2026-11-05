@@ -211,6 +211,47 @@ void runtime_stop_and_watchdog() {
     require(!embedded.stop_requested(), "embedded layer without tray control unchanged");
 }
 
+void arm_and_exit_lifecycle() {
+    Fixture test;
+    test.state.executable_directory = test.state.local_directory / L"Install";
+    const auto package = test.state.executable_directory / L"ofxr";
+    std::filesystem::create_directories(package);
+    std::ofstream(package / L"XR_APILAYER_XRFrameBridge_diagnostic.dll") << "layer";
+    for (const auto* helper : {
+             L"ofxr_amd_fidelityfx_framegeneration_dx12.dll",
+             L"nvngx.dll_dlssnr.dll",
+             L"nvngx.dll_dlssg.dll"})
+        std::ofstream(package / helper) << "runtime helper";
+    test.state.settings.vulkan_support = false;
+
+    std::wstring error;
+    require(arm_and_exit(test.state, &error,
+                xrfg::implicit_layer::RegistryScope::current_user),
+        "arm-and-exit arms");
+    require(test.state.arm_signal == nullptr && test.state.pause_signal == nullptr,
+        "arm-and-exit holds no control handles");
+
+    const auto directory = runtime_directory(test.state.local_directory);
+    std::filesystem::path manifest;
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        if (entry.path().filename().wstring().starts_with(
+                xrfg::implicit_layer::kManifestPrefix))
+            manifest = entry.path();
+    }
+    require(!manifest.empty() && test.registered(manifest),
+        "arm-and-exit leaves the layer registered");
+    std::ifstream ini_file(directory / L"ofxr_bridge.ini");
+    const std::string ini((std::istreambuf_iterator<char>(ini_file)),
+        std::istreambuf_iterator<char>());
+    require(!ini.empty() && ini.find("control_event") == std::string::npos,
+        "arm-and-exit writes no control event");
+    xrfg::implicit_layer::ManualArmControl reader(directory);
+    require(!reader.stop_requested(), "arm-and-exit session runs unmanaged");
+    require(cleanup_all_owned_registrations(test.state, &error) &&
+            !test.registered(manifest) && !std::filesystem::exists(manifest),
+        "next tray start retires the arm-and-exit registration");
+}
+
 void integrity_scope_policy() {
     using xrfg::implicit_layer::RegistryScope;
     require(xrfg::implicit_layer::registry_scope_for_integrity_rid(
@@ -286,6 +327,7 @@ int main() {
         window_lifecycle();
         blocked_manifest();
         runtime_stop_and_watchdog();
+        arm_and_exit_lifecycle();
         integrity_scope_policy();
         queue_preference();
         experimental_preferences();
