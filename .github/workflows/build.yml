@@ -2,7 +2,7 @@ name: Build OFXR Bridge Tray Direct
 
 on:
   push:
-    branches: [ main, master, berylius-arm-and-exit-lifecycle ]
+    branches: [ main, master, berylius-arm-and-exit-lifecycle, berylius-build-all-layers-ci ]
   pull_request:
   workflow_dispatch:
 
@@ -78,8 +78,46 @@ jobs:
             throw "OFXRBridgeTray.exe n'a pas été généré."
           }
 
+          # 3. Compiler la couche Vulkan (OFXR_vulkan_queue_layer.dll)
+          Write-Host "Compilation de OFXR_vulkan_queue_layer.dll..."
+          cl.exe /nologo /O2 /std:c++20 /EHsc /utf-8 /W4 /permissive- `
+            /I "include" `
+            /I "external/Vulkan-Headers/include" `
+            /D "NDEBUG" `
+            /D "NOMINMAX" `
+            /D "WIN32_LEAN_AND_MEAN" `
+            /D "VK_NO_PROTOTYPES" `
+            /D "_CRT_SECURE_NO_WARNINGS" `
+            /LD src/vulkan_layer/vulkan_queue_layer.cpp `
+            /Fe:build/Release/OFXR_vulkan_queue_layer.dll
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "La compilation de OFXR_vulkan_queue_layer.dll a échoué ($LASTEXITCODE)."
+          }
+          if (-not (Test-Path "build/Release/OFXR_vulkan_queue_layer.dll")) {
+            throw "OFXR_vulkan_queue_layer.dll n'a pas été généré."
+          }
+
+          # Placer également la DLL dans ofxr/ (arborescence attendue par le tray au runtime)
+          New-Item -ItemType Directory -Force -Path "build/Release/ofxr"
+          Copy-Item "build/Release/OFXR_vulkan_queue_layer.dll" "build/Release/ofxr/OFXR_vulkan_queue_layer.dll" -Force
+
+          # 4. Copier les DLL précompilées et le fichier de configuration dans ofxr/
+          Write-Host "Copie des DLL précompilées depuis external/ vers ofxr/..."
+          Copy-Item "external/*.dll" "build/Release/ofxr/" -Force
+          if (Test-Path "layer/ofxr_bridge.ini") {
+            Copy-Item "layer/ofxr_bridge.ini" "build/Release/ofxr/ofxr_bridge.ini" -Force
+          }
+
+          # 5. Créer l'archive zip finale pour le build
+          Write-Host "Création du package ZIP OFXRBridgeTray.zip..."
+          Compress-Archive -Path "build/Release/OFXRBridgeTray.exe", "build/Release/ofxr" -DestinationPath "build/Release/OFXRBridgeTray.zip" -Force
+
       - name: Upload Patched Tray Binary
         uses: actions/upload-artifact@v4
         with:
           name: OFXRBridgeTray-patched
-          path: build/Release/OFXRBridgeTray.exe
+          path: |
+            build/Release/OFXRBridgeTray.zip
+            build/Release/OFXRBridgeTray.exe
+            build/Release/ofxr/
